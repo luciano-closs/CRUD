@@ -3,17 +3,33 @@
     $connected_entity = new $field['model'];
     $connected_entity_key_name = $connected_entity->getKeyName();
     $old_value = old(square_brackets_to_dots($field['name'])) ?? $field['value'] ?? $field['default'] ?? false;
+
+    $allows_null = $crud->model::isColumnNullable($field['name']) ?
+        ((isset($field['allows_null']) && $field['allows_null'] != false) || !isset($field['allows_null']) ? true : false) :
+        ((isset($field['allows_null']) && $field['allows_null'] != true) || !isset($field['allows_null']) ? false : true);
+
+    if ($old_value) {
+        $item = $connected_entity->find($old_value);
+
+    }else{
+        // In case the table column is not nullable, and developer didn't force it to be
+        // we select last inserted record in connected entity
+        // (Also works for nullable columns but developer forced allows_null => false)
+
+        if($allows_null == false) {
+           $item = $connected_entity::latest()->first();
+        }
+    }
 @endphp
 
 <div @include('crud::inc.field_wrapper_attributes') >
     <label>{!! $field['label'] !!}</label>
-    <?php $entity_model = $crud->model; ?>
-
     <select
         name="{{ $field['name'] }}"
         style="width: 100%"
         data-init-function="bpFieldInitSelect2FromAjaxElement"
-        data-column-nullable="{{ $entity_model::isColumnNullable($field['name'])?'true':'false' }}"
+        data-column-nullable="{{ $allows_null }}"
+        data-item="{{ (isset($item) && !is_null($item)) ? '{ "id":"'.$item->getKey().'","text":"'.$item->{$field['attribute']} .'"}' : json_encode(false) }}"
         data-dependencies="{{ isset($field['dependencies'])?json_encode(array_wrap($field['dependencies'])): json_encode([]) }}"
         data-placeholder="{{ $field['placeholder'] }}"
         data-minimum-input-length="{{ $field['minimum_input_length'] }}"
@@ -23,26 +39,8 @@
         data-connected-entity-key-name="{{ $connected_entity_key_name }}"
         data-include-all-form-fields="{{ $field['include_all_form_fields'] ?? 'true' }}"
         @include('crud::inc.field_attributes', ['default_class' =>  'form-control'])
+
         >
-
-        @if ($old_value)
-            @php
-                $item = $connected_entity->find($old_value);
-            @endphp
-            @if ($item)
-
-            {{-- allow clear --}}
-            @if ($entity_model::isColumnNullable($field['name']))
-            <option value="" selected>
-                {{ $field['placeholder'] }}
-            </option>
-            @endif
-
-            <option value="{{ $item->getKey() }}" selected>
-                {{ $item->{$field['attribute']} }}
-            </option>
-            @endif
-        @endif
     </select>
 
     {{-- HINT --}}
@@ -65,13 +63,6 @@
     <link href="{{ asset('packages/select2/dist/css/select2.min.css') }}" rel="stylesheet" type="text/css" />
     <link href="{{ asset('packages/select2-bootstrap-theme/dist/select2-bootstrap.min.css') }}" rel="stylesheet" type="text/css" />
     {{-- allow clear --}}
-    @if ($entity_model::isColumnNullable($field['name']))
-    <style type="text/css">
-        .select2-selection__clear::after {
-            content: ' {{ trans('backpack::crud.clear') }}';
-        }
-    </style>
-    @endif
     @endpush
 
     {{-- FIELD JS - will be loaded in the after_scripts section --}}
@@ -88,6 +79,8 @@
 <!-- include field specific select2 js-->
 @push('crud_fields_scripts')
 <script>
+
+
     function bpFieldInitSelect2FromAjaxElement(element) {
         var form = element.closest('form');
         var $placeholder = element.attr('data-placeholder');
@@ -97,17 +90,19 @@
         var $fieldAttribute = element.attr('data-field-attribute');
         var $connectedEntityKeyName = element.attr('data-connected-entity-key-name');
         var $includeAllFormFields = element.attr('data-include-all-form-fields')=='false' ? false : true;
-        var $allowClear = element.attr('data-column-nullable') == 'true' ? true : false;
-        var $dependencies = JSON.parse(element.attr('data-dependencies'));
 
-        if (!$(element).hasClass("select2-hidden-accessible"))
-        {
-            $(element).select2({
+        var $dependencies = JSON.parse(element.attr('data-dependencies'));
+        var $item = JSON.parse(element.attr('data-item'));
+
+        var $allowClear = (element.attr('data-column-nullable') == true && !$item == false) ? true : false;
+
+        var $select2Settings = {
                 theme: 'bootstrap',
                 multiple: false,
                 placeholder: $placeholder,
                 minimumInputLength: $minimumInputLength,
                 allowClear: $allowClear,
+
                 ajax: {
                     url: $dataSource,
                     type: $method,
@@ -147,16 +142,30 @@
                     },
                     cache: true
                 },
-            });
+            };
 
-            // show a clear button if the column is nullable
-            if ($allowClear) {
-                element.on('select2:unselecting', function(e) {
-                    $(this).val('').trigger('change');
-                    // console.log('cleared! '+$(this).val());
-                    e.preventDefault();
-                });
+        if (!$(element).hasClass("select2-hidden-accessible"))
+        {
+            $(element).select2($select2Settings);
+
+            if($item) {
+
+                $(element).append('<option value="'+$item.id+'">'+$item.text+'</option>');
+
+            }else if ($allowClear) {
+                $(element).append('<option value="" >{{ $field['placeholder'] }}</option>');
             }
+
+                element.on('select2:unselect', function(e) {
+                   e.preventDefault();
+
+                   $(element).append(new Option('{{ $field['placeholder'] }}', '',true,true));
+                   $(element).trigger('change');
+
+                });
+
+                document.styleSheets[0].addRule('.select2-selection__clear::after','content:  "{{ trans('backpack::crud.clear') }}";');
+
 
             // if any dependencies have been declared
             // when one of those dependencies changes value
