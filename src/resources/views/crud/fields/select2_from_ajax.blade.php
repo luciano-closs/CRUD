@@ -17,7 +17,7 @@
         // (Also works for nullable columns but developer forced allows_null => false)
 
         if($allows_null == false) {
-           $item = $connected_entity::latest()->first();
+           $item = $connected_entity::latest()->orderByDesc('id')->first();
         }
     }
 @endphp
